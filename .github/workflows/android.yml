@@ -99,5 +99,6 @@ jobs:
             echo ""
             echo "| 产物 | 大小 |"
             echo "| --- | --- |"
-            find app/build/outputs/apk -name '*.apk' -exec sh -c 'echo "| $(basename {}) | $(du -h {} | cut -f1) |"' \;
+            find app/build/outputs/apk -name '*.apk' 2>/dev/null \
+              -exec sh -c 'echo "| $(basename {}) | $(du -h {} | cut -f1) |"' \; || true
           } >> "$GITHUB_STEP_SUMMARY"
