@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <cache-path name="camera" path="camera/" />
+    <files-path name="imports" path="imports/" />
+    <no-backup-path name="secure" path="." />
+</paths>
