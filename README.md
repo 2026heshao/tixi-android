@@ -12,7 +12,8 @@
 ```bash
 # 环境：JDK 17（D:\AndroidDev\jdk-17.0.20.1+1）、Android SDK 35、Gradle Wrapper 8.9
 ./gradlew :app:assembleDebug
-./gradlew :app:testDebugUnitTest          # 20 个 JVM 单测
+./gradlew :app:testDebugUnitTest          # 24 个 JVM 单测（含 Room 首建回归）
+./gradlew :app:testDebugUnitTest -PwithStartupTest   # 追加 Robolectric 冷启动冒烟（需下载原生图形库，约 7 分钟）
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
@@ -169,6 +170,38 @@ app/src/main/java/com/tixi/app/
 
 - `:app:assembleDebug` ✅（APK 23.7 MB，含 6.4 MB 字体；debug 还含 material-icons-extended）
 - `:app:assembleRelease` ✅（R8 后 5.99 MB，未签名）
-- `:app:testDebugUnitTest` ✅ 20/20（Converters 6、DetectGarbage 5、MarkdownParser 5、SafeUrl 4）
+- `:app:testDebugUnitTest` ✅ 24/24（Converters 6、DatabaseOpen 3、DetectGarbage 5、MarkdownParser 5、SafeUrl 4、AppStartup 1）
+- **0.1.1 修复真机启动闪退** ✅ 见 §10
 - MinerU 真实链路 ✅ 2026-11-22 用 `/api/v1/agent` 免登录通道跑通：提交 → OSS 签名 PUT → 轮询 → 取 `full.md`，2 道题正确识别
 - KSP / Hilt / Room 编译期校验通过；R8 release 构建见构建日志
+
+---
+
+## 10. 启动闪退复盘（0.1.0 → 0.1.1）
+
+**现象**：真机点图标 → 白屏一瞬 → 立刻闪退，100% 复现。
+
+**根因**：`TixiDatabase.create()` 把 `Converters` 实例传给 `Room.databaseBuilder().addTypeConverter()`，
+但实体里所有富内容列（options/answer/richBlocks/tags/qualityFlags）在库里都是 `TEXT`，
+JSON 编解码由 `Mappers` 负责，因此 Room 生成的 5 个 DAO 的 `getRequiredConverters()` **全部返回空列表**。
+`RoomDatabase.init()` 会核对「传入的转换器是否被任何 DAO 使用」，对不上就抛：
+
+```
+java.lang.IllegalArgumentException: Unexpected type converter com.tixi.app.data.local.Converters@...
+    at androidx.room.RoomDatabase.init(RoomDatabase.kt:284)
+    at androidx.room.RoomDatabase$Builder.build(RoomDatabase.kt:1352)
+```
+
+`build()` 发生在**第一次注入 `TixiDatabase`** 时 —— 也就是首屏 `OnboardingViewModel` 调用
+`questionRepository.observeAll()` 的那一刻。Compose 已画出空画布（白屏），随后建库抛异常 → 闪退。
+这就是「编译通过、单测全绿、真机必崩」的原因：此前没有任何测试真正 `build()` 过数据库。
+
+**修复**：`create(context)` 去掉 `addTypeConverter` 与 `@TypeConverters`；`provideDatabase` 去掉参数；
+`Converters` 降级为纯 JSON 工具类并在注释里写明不得再交给 Room。
+
+**防回归**：新增 `DatabaseOpenTest`（Robolectric，**文件型**数据库）真实执行
+`build() → onCreate 种子 SQL → 插入含表格/公式的题目 → 读回 → count/countByCategory/countByType/search → 删分类解绑`。
+今后任何建库期异常都会在这里失败，而不是等你装到手机上。
+
+**取证能力**：新增 `CrashRecorder` + `CrashScreen`（调试包生效）。全局未捕获异常会连同「最后到达的启动阶段」
+写入 `filesDir/diagnostics/last_crash.txt`，下次启动直接展示并支持复制/分享 —— 没有 logcat 也能定位。
