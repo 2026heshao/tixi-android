@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -78,6 +78,18 @@ jobs:
           name: tixi-release-apk-unsigned
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+
+      - name: 发布到 Release（latest）
+        if: ${{ github.event_name == 'push' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view latest >/dev/null 2>&1 || \
+            gh release create latest --title "最新构建" --notes "每次推送到 main 自动构建。debug 包可直接安装。"
+          gh release upload latest app/build/outputs/apk/debug/*.apk --clobber
+          if [ -f app/build/outputs/apk/release/app-release-unsigned.apk ]; then
+            gh release upload latest app/build/outputs/apk/release/*.apk --clobber
+          fi
 
       - name: 产物摘要
         if: always()
