@@ -34,7 +34,12 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 `.github/workflows/android.yml`：push 到 `main` 或手动 Run workflow → JDK 17 + Gradle 缓存 → 跑单测 → 出 debug 与 release（R8、未签名）两个 APK，产物在 Actions 运行的 Artifacts 里。
 
-`local.properties` 不入库，CI 由 runner 的 `ANDROID_HOME` 提供 SDK 路径；`.gitattributes` 已把 `gradlew` 锁为 LF（否则 Linux runner 报 `bad interpreter`）。
+`local.properties` 不入库，CI 由 runner 的 `ANDROID_HOME` 提供 SDK 路径；`.gitattributes` 已把 `gradlew` 锁为 LF、可执行位设为 100755（否则 Linux runner 分别报 `bad interpreter` 与 `Permission denied`）。
+
+- 仓库：https://github.com/2026heshao/tixi-android（公开）
+- 手机直装固定链接（每次推送 main 自动覆盖）：
+  `https://github.com/2026heshao/tixi-android/releases/download/latest/app-debug.apk`
+- 首次云端构建耗时约 7 分钟（含冷启动拉 SDK 与依赖），命中缓存后约 3 分钟。
 
 ### ⚠️ 中文路径与 JVM 单测
 工程路径含中文（`D:\桌面\AI Port\...`）时，`testDebugUnitTest` 会在启动测试类时抛
