@@ -2,5 +2,5 @@
 <paths>
     <cache-path name="camera" path="camera/" />
     <files-path name="imports" path="imports/" />
-    <no-backup-path name="secure" path="." />
+    <files-path name="diagnostics" path="diagnostics/" />
 </paths>

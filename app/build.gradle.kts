@@ -15,8 +15,8 @@ android {
         applicationId = "com.tixi.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
     }
@@ -42,6 +42,24 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    }
+
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            isReturnDefaultValues = true
+        }
+    }
+}
+
+/**
+ * AppStartupTest 走 Robolectric 原生图形栈（要额外下载 nativeruntime，单次约 7 分钟）。
+ * CI 默认跳过它以免拖慢发版；本地要跑启动冒烟时加 -PwithStartupTest。
+ * 数据库首建回归 DatabaseOpenTest 不依赖图形栈，始终随 CI 执行。
+ */
+tasks.withType<Test>().configureEach {
+    if (!project.hasProperty("withStartupTest")) {
+        exclude("**/AppStartupTest*")
     }
 }
 
@@ -77,4 +95,7 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation("org.robolectric:robolectric:4.13")
+    testImplementation("androidx.test:core-ktx:1.6.1")
+    testImplementation("androidx.test.ext:junit:1.2.1")
 }

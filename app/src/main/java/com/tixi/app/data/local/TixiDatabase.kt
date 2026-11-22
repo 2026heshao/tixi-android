@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
-import androidx.room.TypeConverters
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.tixi.app.data.local.dao.CategoryDao
 import com.tixi.app.data.local.dao.ImportDao
@@ -33,7 +32,6 @@ import com.tixi.app.domain.model.BuiltInQuestionType
     version = 1,
     exportSchema = false,
 )
-@TypeConverters(Converters::class)
 abstract class TixiDatabase : RoomDatabase() {
 
     abstract fun categoryDao(): CategoryDao
@@ -46,12 +44,16 @@ abstract class TixiDatabase : RoomDatabase() {
         const val DB_NAME = "tixi.db"
 
         /**
-         * [Converters] 需要注入 Json，属于 provided type converter：
-         * 注解让编译器识别转换方法，实例由 addTypeConverter 在运行时提供。
+         * 建库。
+         *
+         * ⚠️ 这里**不能**再调用 `.addTypeConverter(...)`：实体的富内容列（options/answer/
+         * richBlocks/tags/qualityFlags）在库里一律是 TEXT，由 Mappers 负责 JSON 编解码，
+         * 所以 Room 生成的 `getRequiredConverters()` 全是空列表。此时多传一个转换器实例，
+         * `RoomDatabase.init()` 会判定「未被任何 DAO 使用」并抛
+         * `IllegalArgumentException: Unexpected type converter`，导致首次查库必崩。
          */
-        fun create(context: Context, converters: Converters): TixiDatabase =
+        fun create(context: Context): TixiDatabase =
             Room.databaseBuilder(context, TixiDatabase::class.java, DB_NAME)
-                .addTypeConverter(converters)
                 .addCallback(SeedCallback)
                 .build()
 

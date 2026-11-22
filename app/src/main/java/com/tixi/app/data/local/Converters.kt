@@ -1,6 +1,5 @@
 package com.tixi.app.data.local
 
-import androidx.room.ProvidedTypeConverter
 import androidx.room.TypeConverter
 import com.tixi.app.domain.model.AnswerData
 import com.tixi.app.domain.model.RichBlock
@@ -10,12 +9,18 @@ import kotlinx.serialization.json.Json
 import javax.inject.Inject
 
 /**
- * Room 类型转换器。因为需要注入统一配置的 [Json]（多态判别键 type），
- * 所以标记 [ProvidedTypeConverter]，实例由 DataModule 在 build 数据库时传入。
+ * 富内容 / 答案的 JSON 编解码工具。
+ *
+ * ⚠️ 当前**不参与 Room 的转换器机制**：所有实体列在库里都是 TEXT，
+ * Room 侧的编解码由 `Mappers` 完成（生成的 `getRequiredConverters()` 全为空）。
+ * 因此 `TixiDatabase.create()` 里不能再 `addTypeConverter(this)` —— 多传实例会让
+ * `RoomDatabase.init()` 抛 `Unexpected type converter` 并导致首次查库崩溃。
+ *
+ * 将来若把某列改成 `List<String>` / `AnswerData` / `List<RichBlock>` 这类自定义类型，
+ * 才需要把它重新标成 `@ProvidedTypeConverter` 并在建库时注入。
  *
  * 容错约定：反序列化失败绝不抛异常，返回空集合 / [AnswerData.Empty]，脏数据只会丢内容不会崩。
  */
-@ProvidedTypeConverter
 class Converters @Inject constructor(
     private val json: Json,
 ) {

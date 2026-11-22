@@ -11,9 +11,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.tixi.app.diagnostics.CrashRecorder
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavType
@@ -42,9 +46,20 @@ import com.tixi.app.ui.common.TixiBottomNav
 import androidx.compose.foundation.isSystemInDarkTheme
 
 @Composable
-fun TixiAppRoot(viewModel: RootViewModel = hiltViewModel()) {
+fun TixiAppRoot() {
+    val context = LocalContext.current
+    // 启动期崩溃取证：区分「Hilt 建 ViewModel 失败」与「UI 渲染失败」
+    remember { CrashRecorder.stage(context, "TixiAppRoot:before-viewmodel") }
+    val viewModel: RootViewModel = hiltViewModel()
+    remember { CrashRecorder.stage(context, "TixiAppRoot:viewmodel-ready") }
+
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val onboardingComplete by viewModel.onboardingComplete.collectAsStateWithLifecycle()
+    remember(onboardingComplete) {
+        if (onboardingComplete != null) {
+            CrashRecorder.stage(context, "TixiAppRoot:settings-loaded")
+        }
+    }
 
     val darkTheme = when (themeMode) {
         ThemeMode.SYSTEM -> isSystemInDarkTheme()
@@ -70,6 +85,11 @@ private fun TixiNavHost(startWithOnboarding: Boolean, onboardingPending: Boolean
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
     val colors = TixiTheme.colors
+    val context = LocalContext.current
+
+    LaunchedEffect(currentRoute) {
+        currentRoute?.let { CrashRecorder.stage(context, "route:$it") }
+    }
 
     val showTabs = currentRoute == TixiRoutes.HOME || currentRoute == TixiRoutes.SETTINGS
 

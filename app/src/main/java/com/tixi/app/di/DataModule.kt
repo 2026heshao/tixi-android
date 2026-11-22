@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
-import com.tixi.app.data.local.Converters
 import com.tixi.app.data.local.TixiDatabase
 import com.tixi.app.data.local.dao.CategoryDao
 import com.tixi.app.data.local.dao.ImportDao
@@ -78,8 +77,7 @@ abstract class DataModule {
         @Singleton
         fun provideDatabase(
             @ApplicationContext context: Context,
-            converters: Converters,
-        ): TixiDatabase = TixiDatabase.create(context, converters)
+        ): TixiDatabase = TixiDatabase.create(context)
 
         @Provides
         fun provideCategoryDao(db: TixiDatabase): CategoryDao = db.categoryDao()
