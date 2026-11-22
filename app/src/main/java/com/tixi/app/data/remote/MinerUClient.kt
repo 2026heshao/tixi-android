@@ -7,6 +7,10 @@ import com.tixi.app.data.remote.dto.ExtractResult
 import com.tixi.app.data.remote.dto.FileItem
 import com.tixi.app.data.remote.dto.FileUrlRequest
 import com.tixi.app.data.remote.dto.FileUrlResponse
+import com.tixi.app.data.remote.dto.LiteStatusData
+import com.tixi.app.data.remote.dto.LiteStatusResponse
+import com.tixi.app.data.remote.dto.LiteSubmitRequest
+import com.tixi.app.data.remote.dto.LiteSubmitResponse
 import com.tixi.app.domain.model.ImportError
 import com.tixi.app.domain.model.ParseOutcome
 import com.tixi.app.domain.model.ParseParams
@@ -45,8 +49,14 @@ import okhttp3.Response
 import okio.BufferedSink
 
 /**
- * MinerU 云端解析（v4，四步）：申请上传地址 → PUT 上传 → 轮询结果 → 下载 zip 取 markdown。
- * 安全约束：token 与题目正文一律不写日志（本类不引入任何日志拦截器 / 不打印正文）。
+ * MinerU 云端解析，两条通道共用同一套 [ParseOutcome] 出口：
+ *
+ * | 通道 | 触发条件 | 接口 | 限制 | 结果 |
+ * |---|---|---|---|---|
+ * | 精准（v4） | 已配置 Token | 申请上传地址 → PUT → 轮询批量结果 → 下载 zip 取 full.md | 200MB / 200 页 | zip + markdown |
+ * | 轻量（v1 agent） | 未配置 Token | 提交任务 → PUT → 轮询单任务 → 下载 markdown | 10MB / 20 页 | markdown 直链 |
+ *
+ * 安全约束：token 与题目正文一律不写日志（本类不引入日志拦截器、不打印正文）。
  */
 @Singleton
 class MinerUClient @Inject constructor(
@@ -64,24 +74,29 @@ class MinerUClient @Inject constructor(
         .retryOnConnectionFailure(false)
         .build()
 
+    /**
+     * @param token 为 null / 空白时自动走**免 Token 轻量通道**，不再要求用户先去注册。
+     *              已配置 Token 则走精准通道（支持表格、公式与整本教辅）。
+     */
     suspend fun parse(
-        token: String,
+        token: String?,
         file: File,
         params: ParseParams,
         onProgress: (ParseProgress) -> Unit = {},
     ): ParseOutcome = withContext(Dispatchers.IO) {
         validate(token, file)?.let { return@withContext ParseOutcome.Failure(it) }
+        val lite = token.isNullOrBlank()
         try {
             onProgress(ParseProgress.Preparing)
-            doParse(token.trim(), file, params, onProgress)
+            if (lite) doParseLite(file, params, onProgress) else doParse(token!!.trim(), file, params, onProgress)
         } catch (e: CancellationException) {
             throw e
         } catch (e: ParseFailure) {
             ParseOutcome.Failure(e.error)
         } catch (e: SocketTimeoutException) {
-            ParseOutcome.Failure(ImportError.Timeout(TOTAL_TIMEOUT_MINUTES))
+            ParseOutcome.Failure(ImportError.Timeout(if (lite) LITE_TIMEOUT_MINUTES else TOTAL_TIMEOUT_MINUTES))
         } catch (e: InterruptedIOException) {
-            ParseOutcome.Failure(ImportError.Timeout(TOTAL_TIMEOUT_MINUTES))
+            ParseOutcome.Failure(ImportError.Timeout(if (lite) LITE_TIMEOUT_MINUTES else TOTAL_TIMEOUT_MINUTES))
         } catch (e: IOException) {
             ParseOutcome.Failure(ImportError.Offline)
         } catch (e: Exception) {
@@ -109,6 +124,138 @@ class MinerUClient @Inject constructor(
         val markdown = readMarkdown(zip)
         onProgress(ParseProgress.Done)
         return ParseOutcome.Success(markdown = markdown, rawZipPath = zip.absolutePath, fileName = file.name)
+    }
+
+    // ---------------------------------------------------------------- 轻量通道（免 Token）
+
+    /**
+     * 轻量通道：无鉴权、单文件、10MB / 20 页，只出 markdown（表格与公式不保证）。
+     * 好处是装完 App 就能导入第一道题，不必先去外部注册。
+     */
+    private suspend fun doParseLite(
+        file: File,
+        params: ParseParams,
+        onProgress: (ParseProgress) -> Unit,
+    ): ParseOutcome {
+        val (taskId, uploadUrl) = requestLiteUpload(file, params)
+        uploadFile(uploadUrl, file, onProgress)
+        val markdownUrl = awaitLiteResult(taskId, params, onProgress)
+        val markdown = downloadMarkdown(taskId, markdownUrl, onProgress)
+        onProgress(ParseProgress.Done)
+        // 轻量通道没有 zip 结果包，rawZipPath 留空
+        return ParseOutcome.Success(markdown = markdown, rawZipPath = null, fileName = file.name)
+    }
+
+    private fun requestLiteUpload(file: File, params: ParseParams): Pair<String, String> {
+        val payload = LiteSubmitRequest(fileName = file.name, language = params.language)
+        val body = json.encodeToString(LiteSubmitRequest.serializer(), payload)
+            .toRequestBody(JSON_MEDIA_TYPE)
+        val request = Request.Builder()
+            .url(LITE_SUBMIT_ENDPOINT)
+            .header("Accept", "application/json")
+            .post(body)
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            ensureHttpOk(response)
+            val text = response.body?.string().orEmpty()
+            val parsed = decode(text) { json.decodeFromString(LiteSubmitResponse.serializer(), text) }
+            throwIfApiError(codeTextOf(parsed.code), parsed.msg)
+            val data = parsed.data ?: throw ParseFailure(ImportError.Server(parsed.msg))
+            val taskId = data.taskId
+            val url = data.fileUrl
+            if (taskId.isBlank() || url.isBlank()) {
+                throw ParseFailure(ImportError.Server("轻量通道未返回任务编号，请稍后重试。"))
+            }
+            return taskId to url
+        }
+    }
+
+    /** 轮询单任务；轻量通道只有 running / done / failed，没有分页进度 */
+    private suspend fun awaitLiteResult(
+        taskId: String,
+        params: ParseParams,
+        onProgress: (ParseProgress) -> Unit,
+    ): String {
+        val interval = params.pollIntervalMs.coerceAtLeast(MIN_POLL_INTERVAL_MS)
+        val deadline = System.currentTimeMillis() + LITE_TIMEOUT_MINUTES * 60_000L
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            if (System.currentTimeMillis() > deadline) {
+                throw ParseFailure(ImportError.Timeout(LITE_TIMEOUT_MINUTES))
+            }
+            val data = fetchLiteStatus(taskId)
+            when (data.state.lowercase(Locale.ROOT)) {
+                "waiting-file", "pending" -> onProgress(ParseProgress.Queued)
+                "running", "converting", "parsing" -> onProgress(ParseProgress.Parsing(0, 0))
+                "done" -> {
+                    val url = data.markdownUrl
+                    if (url.isNullOrBlank()) {
+                        throw ParseFailure(ImportError.Server("轻量通道未返回 Markdown 地址，请稍后重试。"))
+                    }
+                    return url
+                }
+                "failed" -> {
+                    val msg = data.errMsg?.takeIf { it.isNotBlank() }
+                    val code = codeTextOf(data.errCode)
+                    throw ParseFailure(ImportError.Server(msg ?: "轻量解析失败${code?.let { "（$it）" }.orEmpty()}"))
+                }
+                else -> Unit // 未知状态继续等待，由总超时兜底
+            }
+            delay(interval)
+        }
+    }
+
+    private fun fetchLiteStatus(taskId: String): LiteStatusData {
+        val request = Request.Builder()
+            .url("$LITE_STATUS_ENDPOINT/$taskId")
+            .header("Accept", "application/json")
+            .get()
+            .build()
+        client.newCall(request).execute().use { response ->
+            ensureHttpOk(response)
+            val text = response.body?.string().orEmpty()
+            val parsed = decode(text) { json.decodeFromString(LiteStatusResponse.serializer(), text) }
+            throwIfApiError(codeTextOf(parsed.code), parsed.msg)
+            return parsed.data ?: throw ParseFailure(ImportError.Server(parsed.msg))
+        }
+    }
+
+    /** 轻量通道直接给 .md 直链，不需要解压 */
+    private suspend fun downloadMarkdown(
+        taskId: String,
+        markdownUrl: String,
+        onProgress: (ParseProgress) -> Unit,
+    ): String {
+        if (!SafeUrl.isAllowed(markdownUrl)) {
+            throw ParseFailure(ImportError.Server("解析结果下载地址不合法，已阻止下载。"))
+        }
+        onProgress(ParseProgress.Downloading)
+        val request = Request.Builder().url(markdownUrl).get().build()
+        client.newCall(request).execute().use { response ->
+            ensureHttpOk(response)
+            val body = response.body ?: throw ParseFailure(ImportError.Server("下载内容为空。"))
+            if (body.contentLength() > MAX_MARKDOWN_BYTES) {
+                throw ParseFailure(ImportError.Server("识别结果超过 20MB，请拆分文件后重试。"))
+            }
+            val bytes = body.byteStream().use { input ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(BUFFER_SIZE)
+                var total = 0L
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val read = input.read(buffer)
+                    if (read == -1) break
+                    total += read
+                    if (total > MAX_MARKDOWN_BYTES) {
+                        throw ParseFailure(ImportError.Server("识别结果超过 20MB，请拆分文件后重试。"))
+                    }
+                    output.write(buffer, 0, read)
+                }
+                output.toByteArray()
+            }
+            return String(bytes, Charsets.UTF_8).removePrefix("\uFEFF")
+        }
     }
 
     /** 步骤 a：申请上传地址 */
@@ -322,12 +469,18 @@ class MinerUClient @Inject constructor(
 
     // ---------------------------------------------------------------- 校验与错误映射
 
-    private fun validate(token: String, file: File): ImportError? {
-        if (token.isBlank()) return ImportError.TokenMissing
+    private fun validate(token: String?, file: File): ImportError? {
+        val lite = token.isNullOrBlank()
         if (!file.exists() || !file.isFile) return ImportError.BadFile("找不到原始文件，请重新选择。")
         if (file.length() <= 0L) return ImportError.BadFile("文件内容为空，请重新选择。")
-        if (file.length() > MAX_FILE_BYTES) {
-            return ImportError.BadFile("文件超过 200MB，请压缩或拆分后再导入。")
+        if (file.length() > (if (lite) MAX_LITE_FILE_BYTES else MAX_FILE_BYTES)) {
+            return ImportError.BadFile(
+                if (lite) {
+                    "轻量通道单文件上限 10MB。请拆分文件，或在设置中配置 Token 改用精准通道（上限 200MB）。"
+                } else {
+                    "文件超过 200MB，请压缩或拆分后再导入。"
+                },
+            )
         }
         val ext = file.extension.lowercase(Locale.ROOT)
         if (ext.isBlank()) {
@@ -388,11 +541,16 @@ class MinerUClient @Inject constructor(
     private companion object {
         const val FILE_URLS_ENDPOINT = "https://mineru.net/api/v4/file-urls/batch"
         const val EXTRACT_RESULTS_ENDPOINT = "https://mineru.net/api/v4/extract-results/batch"
+        /** 轻量通道：提交走 .../parse/file，查询走 .../parse/{task_id} */
+        const val LITE_SUBMIT_ENDPOINT = "https://mineru.net/api/v1/agent/parse/file"
+        const val LITE_STATUS_ENDPOINT = "https://mineru.net/api/v1/agent/parse"
         const val CACHE_DIR = "mineru"
         const val TOTAL_TIMEOUT_MINUTES = 15
+        const val LITE_TIMEOUT_MINUTES = 10
         const val MIN_POLL_INTERVAL_MS = 500L
         const val BUFFER_SIZE = 64 * 1024
         const val MAX_FILE_BYTES = 200L * 1024 * 1024
+        const val MAX_LITE_FILE_BYTES = 10L * 1024 * 1024
         const val MAX_ZIP_BYTES = 100L * 1024 * 1024
         const val MAX_MARKDOWN_BYTES = 20L * 1024 * 1024
 

@@ -87,7 +87,7 @@ fun OnboardingScreen(
 
                 2 -> {
                     TixiTopBar(
-                        title = "第 1 步 · 配置 Token",
+                        title = "第 1 步 · 配置 Token（可跳过）",
                         onBack = { viewModel.goTo(1) },
                         trailingText = "1 / 3",
                     )
@@ -97,7 +97,7 @@ fun OnboardingScreen(
                             .verticalScroll(rememberScrollState())
                             .padding(horizontal = TixiSpacing.pageHorizontal),
                     ) {
-                        InfoNote("题隙用你自己的 MinerU Token 解析题目。密钥经 Keystore + AES-GCM 加密，仅存本机，不参与云备份。")
+                        InfoNote("不填也能导入：默认走免 Token 的轻量通道（单文件 10MB / 20 页）。填入自己的 MinerU Token 可升级为精准通道，识别表格与公式更可靠。密钥经 Keystore + AES-GCM 加密，仅存本机，不参与云备份。")
                         SectionCard(title = "MinerU Token") {
                             TokenField(
                                 token = state.tokenInput,
@@ -178,9 +178,9 @@ fun OnboardingScreen(
                         )
                         Spacer(Modifier.height(20.dp))
                         StatusStrip(
-                            text = if (state.configured) "MinerU Token 已配置" else "MinerU Token 未配置",
-                            ok = state.configured,
-                            actionLabel = "去配置",
+                            text = if (state.configured) "精准通道 · Token 已配置" else "轻量通道 · 免 Token 可直接导入",
+                            ok = true,
+                            actionLabel = if (state.configured) "查看" else "配置 Token",
                             onAction = { viewModel.goTo(2) },
                         )
                         Spacer(Modifier.height(16.dp))
@@ -309,15 +309,15 @@ private fun StepEmpty(
             EmptyState(
                 icon = Icons.Outlined.UploadFile,
                 message = "题库还是空的",
-                hint = "先配置解析 Token，再导入第一份题目。",
+                hint = "直接用轻量通道导入，配置 Token 可识别表格与公式。",
             )
-            OnbStep(index = 1, title = "配置 MinerU Token", desc = "用于云端解析题目，密钥仅存本机", tag = if (configured) "已完成" else "待配置")
+            OnbStep(index = 1, title = "配置 MinerU Token", desc = "可选，用于识别表格与公式", tag = if (configured) "已完成" else "可选")
             OnbStep(index = 2, title = "导入第一份题目", desc = "拍照或从 PDF / Word 导入", tag = "未开始")
             OnbStep(index = 3, title = "开始顺序练习", desc = "按分类一题一题往下刷", tag = "未开始")
             Spacer(Modifier.height(20.dp))
             StatusStrip(
-                text = if (configured) "MinerU Token 已配置" else "MinerU Token 未配置",
-                ok = configured,
+                text = if (configured) "精准通道 · Token 已配置" else "轻量通道 · 免 Token 可用",
+                ok = true,
                 actionLabel = if (configured) "查看" else "去配置",
                 onAction = onConfigure,
             )

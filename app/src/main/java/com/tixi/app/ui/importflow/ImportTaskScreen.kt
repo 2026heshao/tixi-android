@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.tixi.app.domain.model.ParseChannel
 import com.tixi.app.domain.model.ParseProgress
 import com.tixi.app.ui.common.Badge
 import com.tixi.app.ui.common.BadgeTone
@@ -107,6 +108,11 @@ fun ImportTaskScreen(
                 is ImportRunState.Running -> {
                     Spacer(Modifier.height(6.dp))
                     FileChip(name = current.fileName, sizeLabel = current.sizeLabel)
+                    Spacer(Modifier.height(8.dp))
+                    Badge(
+                        text = current.channel.label,
+                        tone = if (current.channel == ParseChannel.Token) BadgeTone.Primary else BadgeTone.Neutral,
+                    )
                     Stepper(
                         stageIndex = viewModel.stageIndex(current.progress),
                         stageText = viewModel.stageText(current.progress),

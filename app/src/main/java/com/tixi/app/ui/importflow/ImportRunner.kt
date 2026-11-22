@@ -6,6 +6,7 @@ import com.tixi.app.domain.model.DraftQuestion
 import com.tixi.app.domain.model.ImportError
 import com.tixi.app.domain.model.ImportRecord
 import com.tixi.app.domain.model.ImportStatus
+import com.tixi.app.domain.model.ParseChannel
 import com.tixi.app.domain.model.ParseOutcome
 import com.tixi.app.domain.model.ParseParams
 import com.tixi.app.domain.model.ParseProgress
@@ -33,6 +34,8 @@ sealed interface ImportRunState {
         val fileName: String,
         val sizeLabel: String,
         val progress: ParseProgress,
+        /** 实际使用的通道；读 Token 是挂起操作，先给默认值，随后修正 */
+        val channel: ParseChannel = ParseChannel.Lite,
     ) : ImportRunState
 
     data class DraftReady(
@@ -55,7 +58,8 @@ fun ParseProgress.overallPercent(): Int = when (this) {
     is ParseProgress.Uploading -> 8
     is ParseProgress.Uploaded -> 20
     is ParseProgress.Queued -> 30
-    is ParseProgress.Parsing -> 30 + (percent * 60 / 100)
+    // 轻量通道没有分页信息（totalPages=0），给一个「进行中」的中间值，避免进度条卡在 30 不动
+    is ParseProgress.Parsing -> if (totalPages <= 0) 60 else 30 + (percent * 60 / 100)
     is ParseProgress.Downloading -> 92
     is ParseProgress.Done -> 100
 }
@@ -86,11 +90,10 @@ class ImportRunner @Inject constructor(
         _state.value = ImportRunState.Running(file.name, sizeLabel, ParseProgress.Preparing)
 
         job = scope.launch {
+            // Token 只是「升级通道」的开关：没有 Token 也能解析，走免注册的轻量通道
             val token = settingsRepository.getToken()
-            if (token.isNullOrBlank()) {
-                fail(file.name, ImportError.TokenMissing)
-                return@launch
-            }
+            val channel = if (token.isNullOrBlank()) ParseChannel.Lite else ParseChannel.Token
+            (_state.value as? ImportRunState.Running)?.let { _state.value = it.copy(channel = channel) }
             val params: ParseParams = settingsRepository.observeParseParams().first()
 
             val outcome = client.parse(token, file, params) { progress ->

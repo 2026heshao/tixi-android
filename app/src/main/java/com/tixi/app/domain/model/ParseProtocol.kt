@@ -1,5 +1,11 @@
 package com.tixi.app.domain.model
 
+/** 解析通道：未配置 Token 走轻量（免注册，10MB / 20 页），已配置走精准（200MB，表格公式可靠） */
+enum class ParseChannel(val label: String, val hint: String) {
+    Lite("轻量通道", "免 Token，单文件 10MB / 20 页，表格与公式识别不保证"),
+    Token("精准通道", "使用你自己的 MinerU Token，支持 200MB 与表格公式"),
+}
+
 /** 解析四阶段进度，供识别任务页的 Stepper 驱动（设计 §10 #18） */
 sealed interface ParseProgress {
     data object Preparing : ParseProgress

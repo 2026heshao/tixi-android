@@ -140,9 +140,13 @@ fun ImportSourceScreen(
 
                 Spacer(Modifier.height(20.dp))
                 StatusStrip(
-                    text = if (state.configured) "MinerU Token 已配置" else "MinerU Token 未配置，无法发起解析",
-                    ok = state.configured,
-                    actionLabel = if (state.configured) "查看" else "去配置",
+                    text = if (state.configured) {
+                        "精准通道 · Token 已配置"
+                    } else {
+                        "轻量通道 · 免 Token（单文件 10MB / 20 页）"
+                    },
+                    ok = true,
+                    actionLabel = if (state.configured) "查看" else "配置 Token 升级",
                     onAction = onOpenSettings,
                 )
                 Spacer(Modifier.height(16.dp))

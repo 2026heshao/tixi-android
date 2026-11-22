@@ -38,6 +38,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tixi.app.domain.model.ThemeMode
 import com.tixi.app.ui.common.Badge
 import com.tixi.app.ui.common.BadgeTone
+import com.tixi.app.ui.common.InfoNote
 import com.tixi.app.ui.common.SectionCard
 import com.tixi.app.ui.common.SegmentedControl
 import com.tixi.app.ui.common.SettingRow
@@ -96,6 +97,14 @@ fun SettingsScreen(
                     onSave = viewModel::saveToken,
                     onClear = viewModel::clearToken,
                     modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(10.dp))
+                InfoNote(
+                    if (state.configured) {
+                        "已启用精准通道：支持 200MB 大文件与表格、公式识别。清空 Token 会自动退回轻量通道。"
+                    } else {
+                        "未配置时自动使用免注册的轻量通道：单文件 10MB / 20 页，表格与公式识别不保证。填入 Token 即可升级。"
+                    },
                 )
             }
             Spacer(Modifier.height(12.dp))

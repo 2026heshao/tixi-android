@@ -154,6 +154,25 @@ app/src/main/java/com/tixi/app/
 
 ---
 
+## 7.5 解析双通道（0.2.0）
+
+导入不再强制要求 Token：**没 Token 也能导入第一道题**。
+
+| | 轻量通道（默认） | 精准通道（配 Token 后自动启用） |
+|---|---|---|
+| 是否需要注册 | 否 | 需在 MinerU 控制台创建 API Token |
+| 接口 | `POST /api/v1/agent/parse/file` → PUT → `GET /api/v1/agent/parse/{task_id}` | v4 `file-urls/batch` → PUT → `extract-results/batch` → 下载 zip |
+| 限制 | **10 MB / 20 页**，单文件 | 200 MB / 200 页 |
+| 返回 | `markdown_url` **直链**（无需解压） | `full_zip_url`，包内取 `full.md` |
+| 表格 / 公式 | 不保证 | 支持 |
+| 超时 | 10 分钟 | 15 分钟 |
+
+切换逻辑在 `MinerUClient.parse(token: String?, ...)`：`token` 为空即走轻量分支，同一套 `ParseOutcome`/`ImportError` 出口，
+识别任务页会显示当前实际使用的通道徽标。轻量通道没有分页信息，`overallPercent()` 对 `Parsing(0,0)` 给 60% 中间值，避免进度条卡死。
+
+> 实测注意：轻量通道的 PUT 同样**不能带 `Content-Type`**（OSS 签名按空值计算），OkHttp 侧 `RequestBody.contentType() == null` 正好符合；
+> `markdown_url` 直连返回 200，不需要跟随重定向，因此 `followRedirects(false)` 可保持关闭（更安全）。
+
 ## 8. 已知限制 / 后续
 
 1. **真机未回归**：当前环境无连接设备，§9.1 端到端脚本、§9.3 设备矩阵（含 API 24 的宋体回退与 ColorFilter）尚未执行。

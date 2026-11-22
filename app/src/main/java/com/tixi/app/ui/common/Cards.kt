@@ -268,19 +268,10 @@ fun ImportCard(
                     fontWeight = FontWeight.Medium,
                     fontFamily = TixiFontFamilies.Sans,
                 )
-                if (!hasToken) {
-                    Spacer(Modifier.width(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(colors.warning),
-                    )
-                }
             }
             Spacer(Modifier.height(3.dp))
             Text(
-                text = "支持图片 · PDF · DOC · DOCX",
+                text = if (hasToken) "支持图片 · PDF · DOC · DOCX" else "轻量通道 · 单文件 10MB 以内",
                 color = colors.textTertiary,
                 fontSize = 11.sp,
                 fontFamily = TixiFontFamilies.Sans,
